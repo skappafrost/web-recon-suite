@@ -1,139 +1,103 @@
-"""Authentication endpoint analysis and bypass detection.
+"""Authentication endpoint analysis — detect and classify auth mechanisms.
 
-Identifies login, registration, password reset, and OAuth endpoints,
-then analyzes their authentication mechanisms for potential bypasses.
+Identifies authentication-related endpoints, classifies their methods,
+and flags potential bypass candidates.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class BypassCandidate:
+    """Endpoint that may be vulnerable to auth bypass."""
+
+    endpoint: str
+    reason: str
 
 
 class AuthAnalyzer:
-    """Identify and analyze authentication endpoints.
+    """Analyze authentication endpoints and methods.
 
-    Discovers login, logout, registration, and password reset endpoints
-    from a list of URLs. Classifies each endpoint by its likely
-    authentication method (session cookie, JWT, OAuth, etc.).
+    Detects auth-related URLs, classifies their authentication
+    mechanism, and identifies potential bypass candidates.
 
     Usage:
         analyzer = AuthAnalyzer()
-        auth_endpoints = analyzer.find_auth_endpoints(all_endpoints)
-        methods = analyzer.analyze_auth_methods(auth_endpoints)
+        auth_eps = analyzer.find_auth_endpoints(urls)
+        methods = analyzer.analyze_auth_methods(urls)
+        candidates = analyzer.find_bypass_candidates(urls)
     """
 
-    # Patterns that indicate authentication-related endpoints
-    AUTH_PATTERNS = [
-        r"login",
-        r"signin",
-        r"sign-in",
-        r"authenticate",
-        r"auth[/]",
-        r"register",
-        r"signup",
-        r"sign-up",
-        r"password",
-        r"reset",
-        r"forgot",
-        r"token",
-        r"oauth",
-        r"saml",
-        r"callback",
-        r"session",
-        r"logout",
-        r"signout",
-        r"sign-out",
+    AUTH_PATTERNS: list[str] = [
+        "login", "signin", "sign-in", "auth", "oauth",
+        "sso", "token", "session", "callback", "verify",
     ]
 
-    # Patterns that suggest specific auth methods
-    METHOD_PATTERNS: dict[str, list[str]] = {
-        "OAuth/SSO": ["oauth", "sso", "saml", "openid", "cas/", "callback"],
-        "JWT": ["jwt", "token/refresh", "token/verify", "jwks"],
-        "API Key": ["api-key", "apikey", "api_key", "x-api-key"],
-        "Session Cookie": ["session", "cookie", "csrf", "login", "signin"],
-    }
-
-    def __init__(self, custom_patterns: Optional[list[str]] = None) -> None:
-        """Initialize auth analyzer.
-
-        Args:
-            custom_patterns: Additional regex patterns for auth endpoint detection.
-        """
-        patterns = self.AUTH_PATTERNS[:]
-        if custom_patterns:
-            patterns.extend(custom_patterns)
-        self._pattern = re.compile("|".join(patterns), re.IGNORECASE)
+    OAUTH_PATTERNS: list[str] = ["oauth", "sso", "openid", "callback"]
 
     def find_auth_endpoints(self, endpoints: list[str]) -> list[str]:
-        """Filter endpoints that likely handle authentication.
+        """Filter endpoints that appear to be authentication-related.
 
         Args:
-            endpoints: List of all discovered endpoint URLs.
+            endpoints: List of URL paths to analyze.
 
         Returns:
-            List of authentication-related endpoints.
+            Subset of endpoints matching auth patterns.
         """
         auth_endpoints: list[str] = []
-        for endpoint in endpoints:
-            if self._pattern.search(endpoint):
-                auth_endpoints.append(endpoint)
+        for ep in endpoints:
+            lower = ep.lower()
+            if any(pattern in lower for pattern in self.AUTH_PATTERNS):
+                auth_endpoints.append(ep)
         return auth_endpoints
 
     def analyze_auth_methods(self, endpoints: list[str]) -> dict[str, str]:
-        """Analyze authentication methods used by endpoints.
-
-        Classifies each authentication endpoint by its likely auth
-        mechanism based on URL path patterns.
+        """Classify the authentication method for each endpoint.
 
         Args:
-            endpoints: List of authentication endpoints.
+            endpoints: List of URL paths to classify.
 
         Returns:
-            Dict mapping endpoint URL to detected auth method.
+            Mapping of endpoint → auth method string.
         """
         methods: dict[str, str] = {}
-        for endpoint in endpoints:
-            endpoint_lower = endpoint.lower()
-            detected = "Unknown"
-            for method, patterns in self.METHOD_PATTERNS.items():
-                if any(p in endpoint_lower for p in patterns):
-                    detected = method
-                    break
-            methods[endpoint] = detected
+        for ep in endpoints:
+            lower = ep.lower()
+            if any(p in lower for p in self.OAUTH_PATTERNS):
+                methods[ep] = "OAuth/SSO"
+            elif "token" in lower or "api" in lower:
+                methods[ep] = "API Token"
+            elif "session" in lower:
+                methods[ep] = "Session Cookie"
+            else:
+                methods[ep] = "Unknown"
         return methods
 
-    def find_bypass_candidates(self, endpoints: list[str]) -> list[dict]:
+    def find_bypass_candidates(self, endpoints: list[str]) -> list[dict[str, str]]:
         """Identify endpoints that may be vulnerable to auth bypass.
 
-        Looks for patterns like forced password change endpoints,
-        API routes that may lack auth middleware, and admin paths
-        that might be directly accessible.
+        Flags admin panels, API versioned endpoints, and
+        other patterns that commonly have weak auth.
 
         Args:
-            endpoints: List of all discovered endpoints.
+            endpoints: List of URL paths to check.
 
         Returns:
-            List of bypass candidate dictionaries with reasoning.
+            List of dicts with 'endpoint' and 'reason' keys.
         """
-        candidates: list[dict] = []
-
+        candidates: list[dict[str, str]] = []
         bypass_patterns = [
-            (r"/api/v[0-9]+/(?!auth)", "API endpoint may lack authentication middleware"),
-            (r"force.*change|changepassword|reset-password", "Forced password change may be bypassable"),
-            (r"/admin(?!/login)", "Admin path may be accessible without auth"),
-            (r"/debug|/dev|/test", "Debug/dev/test endpoints may bypass auth"),
-            (r"/graphql", "GraphQL endpoint may expose unauthorized data"),
+            (r"admin", "Admin panel — often has weaker auth"),
+            (r"api/v\d+", "Versioned API — may lack consistent auth"),
+            (r"debug|dev|test|staging", "Non-production endpoint"),
+            (r"graphql", "GraphQL — may expose unauthorized fields"),
         ]
-
-        for endpoint in endpoints:
+        for ep in endpoints:
             for pattern, reason in bypass_patterns:
-                if re.search(pattern, endpoint, re.IGNORECASE):
-                    candidates.append({
-                        "endpoint": endpoint,
-                        "reason": reason,
-                        "severity": "high",
-                    })
+                if re.search(pattern, ep, re.IGNORECASE):
+                    candidates.append({"endpoint": ep, "reason": reason})
                     break
-
         return candidates
