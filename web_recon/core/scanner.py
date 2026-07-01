@@ -7,12 +7,10 @@ passive scanning modes with configurable depth and concurrency.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
-from bs4 import BeautifulSoup
 
 from web_recon.core.endpoints import EndpointDiscoverer
 from web_recon.core.auth import AuthAnalyzer

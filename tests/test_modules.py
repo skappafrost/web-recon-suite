@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 
 from web_recon.modules.cors import CORSAnalyzer, CORSResult
-from web_recon.modules.credentials import CredentialTester, CredResult
+from web_recon.modules.credentials import CredentialTester
 from web_recon.modules.report import ReportGenerator
 from web_recon.core.scanner import ScanResult
 
